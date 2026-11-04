@@ -1,8 +1,11 @@
 import asyncio
 import contextlib
 import logging
+import shutil
+import subprocess
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
@@ -15,7 +18,7 @@ from .api.admin import router as admin_router
 from .bot import router as telegram_router
 from .config import ROOT_DIR, get_settings
 from .database import SessionLocal, engine
-from .catalog import SETTING_DEFAULTS
+from .catalog import CATEGORY_STEP_ROLLOUT_KEY, SETTING_DEFAULTS, category_step_rollout
 from .models import AppSetting, Base, Campaign, Category, Order, OrderStatus, Product
 from sqlalchemy.orm import selectinload
 
@@ -155,6 +158,17 @@ async def initialize_database() -> None:
         for key, value in SETTING_DEFAULTS.items():
             if await session.get(AppSetting, key) is None:
                 session.add(AppSetting(key=key, value=value))
+        await session.flush()
+        rollout = category_step_rollout(
+            await session.get(AppSetting, CATEGORY_STEP_ROLLOUT_KEY) is not None
+        )
+        if rollout is not None:
+            for key, value in rollout.items():
+                row = await session.get(AppSetting, key)
+                if row is None:
+                    session.add(AppSetting(key=key, value=value))
+                else:
+                    row.value = value
         await session.commit()
 
 
@@ -241,7 +255,41 @@ async def health() -> dict[str, str | bool]:
     }
 
 
-frontend_dist = ROOT_DIR / "frontend" / "dist"
-if frontend_dist.exists():
-    app.mount("/admin", StaticFiles(directory=frontend_dist, html=True), name="admin")
+def refresh_admin_bundle() -> None:
+    frontend = ROOT_DIR / "frontend"
+    dist_index = frontend / "dist" / "index.html"
+    source_files = [path for path in (frontend / "src").rglob("*") if path.is_file()]
+    if not source_files:
+        return
+    newest_source = max(path.stat().st_mtime for path in source_files)
+    if dist_index.exists() and dist_index.stat().st_mtime >= newest_source:
+        return
+    npm = shutil.which("npm")
+    if npm is None:
+        logger.warning("Admin source is newer than frontend/dist, but npm is not installed")
+        return
+    logger.info("Rebuilding admin UI from frontend/src")
+    try:
+        if not (frontend / "node_modules").exists():
+            subprocess.run([npm, "install"], cwd=frontend, check=True, timeout=300)
+        subprocess.run([npm, "run", "build"], cwd=frontend, check=True, timeout=180)
+    except Exception:
+        logger.exception("Admin rebuild failed; serving the bundled admin if present")
+
+
+def admin_static_dir() -> Path | None:
+    refresh_admin_bundle()
+    candidates = []
+    for path in (ROOT_DIR / "frontend" / "dist", ROOT_DIR / "backend" / "static" / "admin"):
+        index = path / "index.html"
+        if index.is_file():
+            candidates.append((index.stat().st_mtime, path))
+    if not candidates:
+        return None
+    return max(candidates)[1]
+
+
+admin_dir = admin_static_dir()
+if admin_dir is not None:
+    app.mount("/admin", StaticFiles(directory=admin_dir, html=True), name="admin")
 

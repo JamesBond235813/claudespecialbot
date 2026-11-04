@@ -5,6 +5,7 @@ from app.catalog import (
     SETTING_DEFAULTS,
     build_store_catalog,
     category_allows,
+    category_step_rollout,
     category_menu_rows,
     compose_store_text,
     confirm_rows,
@@ -90,13 +91,19 @@ def test_store_text_puts_products_first_and_keeps_optional_welcome_on_the_same_m
     assert compose_store_text(welcome_text="  ", prompt="请选择商品：", include_welcome=True) == "请选择商品："
 
 
-def test_default_settings_keep_the_category_step_on():
+def test_default_settings_skip_the_category_step():
     parsed = parsed_store_settings({})
-    assert parsed["show_categories"] is True
+    assert parsed["show_categories"] is False
     assert parsed["store_prompt"] == SETTING_DEFAULTS["store_prompt"]
-    assert parsed_store_settings({"show_categories": "0"})["show_categories"] is False
+    assert parsed_store_settings({"show_categories": "1"})["show_categories"] is True
+    assert parsed_store_settings({"show_categories": None})["show_categories"] is False
     assert parse_bool(None, default=True) is True
     assert parse_bool("off") is False
+
+
+def test_category_step_rollout_runs_once():
+    assert category_step_rollout(False) == {"show_categories": "0", "category_step_rollout": "1"}
+    assert category_step_rollout(True) is None
 
 
 def test_legacy_category_index_matches_the_previous_alphabetical_order():

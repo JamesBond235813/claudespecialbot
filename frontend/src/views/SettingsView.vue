@@ -3,7 +3,7 @@ import { inject, onMounted, reactive, ref } from 'vue'
 
 const request = inject('request')
 const form = reactive({
-  show_categories: true,
+  show_categories: false,
   welcome_text: '',
   store_prompt: '',
   product_prompt: '',

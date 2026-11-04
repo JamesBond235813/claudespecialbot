@@ -3,12 +3,14 @@ from decimal import Decimal
 
 
 SETTING_DEFAULTS = {
-    "show_categories": "1",
+    "show_categories": "0",
     "welcome_text": "",
     "store_prompt": "请选择需要预约的数字服务：",
     "product_prompt": "请选择商品：",
     "terms_text": "",
 }
+
+CATEGORY_STEP_ROLLOUT_KEY = "category_step_rollout"
 
 DEFAULT_TERMS = (
     "1. 商品内容、价格与交付时间以下单页为准。\n"
@@ -38,12 +40,19 @@ def parsed_store_settings(raw: dict[str, str] | None) -> dict:
     if raw:
         data.update({key: value for key, value in raw.items() if key in SETTING_DEFAULTS})
     return {
-        "show_categories": parse_bool(data.get("show_categories"), default=True),
+        "show_categories": parse_bool(data.get("show_categories"), default=False),
         "welcome_text": (data.get("welcome_text") or "").strip(),
         "store_prompt": (data.get("store_prompt") or SETTING_DEFAULTS["store_prompt"]).strip(),
         "product_prompt": (data.get("product_prompt") or SETTING_DEFAULTS["product_prompt"]).strip(),
         "terms_text": (data.get("terms_text") or "").strip(),
     }
+
+
+def category_step_rollout(already_applied: bool) -> dict[str, str] | None:
+    """Turn the category step off once on upgrade, then leave the switch alone."""
+    if already_applied:
+        return None
+    return {"show_categories": "0", CATEGORY_STEP_ROLLOUT_KEY: "1"}
 
 
 def compose_store_text(*, welcome_text: str, prompt: str, include_welcome: bool) -> str:

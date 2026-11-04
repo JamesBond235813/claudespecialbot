@@ -266,7 +266,7 @@ class CustomerOut(BaseModel):
 
 
 class StoreSettings(BaseModel):
-    show_categories: bool = True
+    show_categories: bool = False
     welcome_text: str = Field(default="", max_length=2000)
     store_prompt: str = Field(default="请选择需要预约的数字服务：", max_length=500)
     product_prompt: str = Field(default="请选择商品：", max_length=500)
