@@ -1,0 +1,10 @@
+aiogram==3.22.0
+asyncmy==0.2.10
+cryptography==50.0.2
+fastapi==0.119.1
+greenlet==3.2.4
+pydantic-settings==2.11.0
+python-dotenv==1.1.1
+sqlalchemy==2.0.44
+uvicorn[standard]==0.38.0
+

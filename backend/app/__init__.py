@@ -1,0 +1,2 @@
+"""Digital delivery Telegram service."""
+
