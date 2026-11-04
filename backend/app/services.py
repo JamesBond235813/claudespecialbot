@@ -1,14 +1,18 @@
 import uuid
 from datetime import datetime, time, timedelta, timezone
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from .catalog import SETTING_DEFAULTS, format_usdt
 from .config import get_settings
 from .models import (
+    AppSetting,
     Campaign,
+    Category,
     Customer,
     Order,
     OrderStatus,
@@ -21,11 +25,6 @@ from .models import (
 
 def utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def format_usdt(amount) -> str:
-    value = format(amount, "f")
-    return value.rstrip("0").rstrip(".") if "." in value else value
 
 
 def calculate_delivery_at(now: datetime | None = None) -> datetime:
@@ -41,6 +40,38 @@ def calculate_delivery_at(now: datetime | None = None) -> datetime:
         tzinfo=business_tz,
     )
     return local_delivery.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def business_day_bounds(now: datetime | None = None) -> tuple[datetime, datetime]:
+    settings = get_settings()
+    business_tz = ZoneInfo(settings.business_timezone)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    local_now = current.astimezone(business_tz)
+    start_local = datetime.combine(local_now.date(), time.min, tzinfo=business_tz)
+    end_local = start_local + timedelta(days=1)
+    start = start_local.astimezone(timezone.utc).replace(tzinfo=None)
+    end = end_local.astimezone(timezone.utc).replace(tzinfo=None)
+    return start, end
+
+
+def select_display_payment(payments) -> Payment | None:
+    if not payments:
+        return None
+    pending = [
+        payment
+        for payment in payments
+        if payment.status == PaymentStatus.PENDING and payment.tx_hash
+    ]
+    pool = pending or list(payments)
+    return max(pool, key=lambda payment: payment.id)
+
+
+def decimal_amount(value) -> Decimal:
+    if value is None:
+        return Decimal("0")
+    return Decimal(str(value))
 
 
 async def upsert_customer(session: AsyncSession, telegram_user) -> Customer:
@@ -78,7 +109,7 @@ async def create_order(
     quantity: int = 1,
 ) -> tuple[Order, Payment | None]:
     if quantity < 1 or quantity > 100:
-        raise ValueError("Quantity must be between 1 and 100")
+        raise ValueError("数量必须在 1 到 100 之间")
     reserved = await session.execute(
         update(Product)
         .where(
@@ -314,7 +345,39 @@ async def update_order_status(
     return order
 
 
-async def dashboard_counts(session: AsyncSession) -> dict[str, int]:
+async def get_store_settings(session: AsyncSession) -> dict[str, str]:
+    stored = dict(SETTING_DEFAULTS)
+    rows = (await session.scalars(select(AppSetting))).all()
+    for row in rows:
+        if row.key in stored:
+            stored[row.key] = row.value
+    return stored
+
+
+async def save_store_settings(session: AsyncSession, values: dict[str, str]) -> dict[str, str]:
+    for key, value in values.items():
+        if key not in SETTING_DEFAULTS:
+            continue
+        row = await session.get(AppSetting, key)
+        if row is None:
+            session.add(AppSetting(key=key, value=value))
+        else:
+            row.value = value
+    await session.commit()
+    return await get_store_settings(session)
+
+
+async def ensure_category(session: AsyncSession, name: str) -> Category:
+    cleaned = name.strip()
+    category = await session.scalar(select(Category).where(Category.name == cleaned))
+    if category is None:
+        category = Category(name=cleaned, is_visible=True, sort_order=0)
+        session.add(category)
+        await session.flush()
+    return category
+
+
+async def dashboard_stats(session: AsyncSession) -> dict[str, int | str]:
     total_orders = await session.scalar(select(func.count(Order.id))) or 0
     pending_orders = await session.scalar(
         select(func.count(Order.id)).where(
@@ -335,10 +398,41 @@ async def dashboard_counts(session: AsyncSession) -> dict[str, int]:
     active_products = await session.scalar(
         select(func.count(Product.id)).where(Product.is_active.is_(True))
     ) or 0
+    customer_count = await session.scalar(select(func.count(Customer.id))) or 0
+    start, end = business_day_bounds()
+    today_orders = await session.scalar(
+        select(func.count(Order.id)).where(Order.created_at >= start, Order.created_at < end)
+    ) or 0
+    pending_payment_count = await session.scalar(
+        select(func.count(Payment.id)).where(
+            Payment.status == PaymentStatus.PENDING,
+            Payment.tx_hash.is_not(None),
+        )
+    ) or 0
+    revenue = await session.scalar(
+        select(func.coalesce(func.sum(Payment.amount), 0)).where(
+            Payment.status == PaymentStatus.SUCCEEDED
+        )
+    )
+    pending_amount = await session.scalar(
+        select(func.coalesce(func.sum(Payment.amount), 0)).where(
+            Payment.status == PaymentStatus.PENDING,
+            Payment.tx_hash.is_not(None),
+        )
+    )
     return {
         "total_orders": total_orders,
         "pending_orders": pending_orders,
         "completed_orders": completed_orders,
         "active_products": active_products,
+        "customer_count": customer_count,
+        "today_orders": today_orders,
+        "pending_payment_count": pending_payment_count,
+        "revenue_usdt": format_usdt(decimal_amount(revenue)),
+        "pending_payment_amount": format_usdt(decimal_amount(pending_amount)),
     }
+
+
+async def dashboard_counts(session: AsyncSession) -> dict[str, int | str]:
+    return await dashboard_stats(session)
 

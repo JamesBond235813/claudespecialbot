@@ -15,7 +15,8 @@ from .api.admin import router as admin_router
 from .bot import router as telegram_router
 from .config import ROOT_DIR, get_settings
 from .database import SessionLocal, engine
-from .models import Base, Campaign, Customer, Order, OrderStatus, Product
+from .catalog import SETTING_DEFAULTS
+from .models import AppSetting, Base, Campaign, Category, Order, OrderStatus, Product
 from sqlalchemy.orm import selectinload
 
 
@@ -75,6 +76,7 @@ async def initialize_database() -> None:
                 "stock_quantity": "INT NULL",
                 "deposit_usdt": "DECIMAL(18, 6) NOT NULL DEFAULT 0.000000",
                 "total_usdt": "DECIMAL(18, 6) NOT NULL DEFAULT 0.000000",
+                "sort_order": "INT NOT NULL DEFAULT 0",
             },
             "orders": {
                 "quantity": "INT NOT NULL DEFAULT 1",
@@ -143,6 +145,16 @@ async def initialize_database() -> None:
         campaign = await session.scalar(select(Campaign).where(Campaign.code == "x_default"))
         if campaign is None:
             session.add(Campaign(code="x_default", name="X 默认入口", is_active=True))
+        category_names = list((await session.scalars(select(Product.category).distinct())).all())
+        for name in category_names:
+            if not name:
+                continue
+            existing_category = await session.scalar(select(Category).where(Category.name == name))
+            if existing_category is None:
+                session.add(Category(name=name, is_visible=True, sort_order=0))
+        for key, value in SETTING_DEFAULTS.items():
+            if await session.get(AppSetting, key) is None:
+                session.add(AppSetting(key=key, value=value))
         await session.commit()
 
 
@@ -163,8 +175,8 @@ async def lifespan(app: FastAPI):
         app.state.reminder_task = asyncio.create_task(delivery_reminder_loop(bot))
         await bot.set_my_commands(
             [
-                BotCommand(command="start", description="开始预约"),
-                BotCommand(command="products", description="查看服务商品"),
+                BotCommand(command="start", description="进入商店"),
+                BotCommand(command="products", description="查看商品"),
                 BotCommand(command="orders", description="查询我的订单"),
                 BotCommand(command="txid", description="提交 USDT 交易哈希"),
                 BotCommand(command="terms", description="查看服务条款"),
@@ -207,6 +219,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Total-Count"],
 )
 app.include_router(admin_router)
 

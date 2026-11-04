@@ -81,6 +81,28 @@ class Campaign(TimestampMixin, Base):
     orders: Mapped[list["Order"]] = relationship(back_populates="campaign")
 
 
+class Category(TimestampMixin, Base):
+    __tablename__ = "categories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    is_visible: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class Product(TimestampMixin, Base):
     __tablename__ = "products"
 
@@ -95,6 +117,7 @@ class Product(TimestampMixin, Base):
     delivery_note: Mapped[str] = mapped_column(String(500), default="次日人工交付", nullable=False)
     stock_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     orders: Mapped[list["Order"]] = relationship(back_populates="product")
 
